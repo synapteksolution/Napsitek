@@ -2,12 +2,12 @@ export function AboutSection() {
   return (
     <section id="sobre-nosotros" className="py-24 relative overflow-hidden bg-[var(--ink-900)]">
       {/* BACKGROUND IMAGE CON OVERLAY */}
-      <div 
+      <div
         className="absolute inset-0 z-0 opacity-20 pointer-events-none mix-blend-overlay"
         style={{ backgroundImage: 'url("/images/fondo.png")', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }}
       ></div>
       <div className="absolute inset-0 z-0 bg-gradient-to-b from-[var(--ink-900)] via-transparent to-[var(--ink-900)] pointer-events-none"></div>
-      
+
       <div className="wrap max-w-7xl mx-auto px-6 relative z-10">
         <div className="section-head text-center mb-16 mx-auto max-w-3xl">
           <span className="eyebrow text-[var(--ochre)] font-bold tracking-[0.2em] uppercase text-xs">Sobre nosotros</span>
