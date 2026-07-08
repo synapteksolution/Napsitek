@@ -1,0 +1,28 @@
+napsitek.com {
+	root * /var/www/napsitek.com
+
+	# Enable gzip/zstd compression
+	encode zstd gzip
+
+	# Security headers
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+	}
+
+	# Cache static assets aggressively (Vite hashes filenames)
+	@static path *.js *.css *.woff2 *.woff *.ttf *.ico *.svg *.png *.jpg *.jpeg *.webp *.avif
+	header @static Cache-Control "public, max-age=31536000, immutable"
+
+	# SPA fallback: serve index.html for any route not matching a file
+	try_files {path} /index.html
+
+	file_server
+}
+
+# Redirect www to apex
+www.napsitek.com {
+	redir https://napsitek.com{uri} permanent
+}
