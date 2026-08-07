@@ -17,7 +17,7 @@ napsitek.com {
 	header @static Cache-Control "public, max-age=31536000, immutable"
 
 	# Reverse proxy for backend API
-	handle_path /api/* {
+	handle /api/* {
 		reverse_proxy localhost:3003
 	}
 

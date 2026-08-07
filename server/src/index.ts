@@ -9,8 +9,9 @@ const app = express()
 app.use(cors({ origin: config.frontendUrl }))
 app.use(express.json())
 
-// Rutas
+// Rutas - montar en /api y en / para máxima compatibilidad con el reverse proxy de Caddy
 app.use('/api', calendarRoutes)
+app.use('/', calendarRoutes)
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
