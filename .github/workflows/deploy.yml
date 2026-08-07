@@ -85,7 +85,10 @@ jobs:
             server.env \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/napsitek-backend/.env
 
+      - name: Ensure Remote pnpm and pm2 Tools
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p ~/.local/bin && npm config set prefix '~/.local' && export PATH=\$HOME/.local/bin:\$PATH && (which pnpm || npm install -g pnpm) && (which pm2 || npm install -g pm2)"
+
       - name: Install Remote Production Dependencies & Restart Service
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/napsitek-backend && PATH=\$HOME/.local/bin:\$PATH pnpm install --prod && (PATH=\$HOME/.local/bin:\$PATH pm2 reload napsitek-backend || PATH=\$HOME/.local/bin:\$PATH pm2 start dist/index.js --name napsitek-backend --max-memory-restart 150M)"
-
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "export PATH=\$HOME/.local/bin:\$PATH && cd ~/napsitek-backend && pnpm install --prod && (pm2 reload napsitek-backend || pm2 start dist/index.js --name napsitek-backend --max-memory-restart 150M)"
