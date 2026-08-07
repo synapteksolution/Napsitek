@@ -2,7 +2,6 @@ import { google } from 'googleapis'
 import { config, validateEnv } from '../config/env.js'
 import { BookingRequest, TimeSlot, BookingResponse } from '../types/calendar.types.js'
 
-// Franjas de horarios laborales configurables (e.g. de 09:00 a 17:00 cada hora)
 const DEFAULT_BUSINESS_SLOTS = [
   '09:00', '10:00', '11:00', '13:00', '14:30', '16:00', '17:00'
 ]
@@ -27,7 +26,6 @@ export class CalendarService {
   async getAvailability(dateStr: string): Promise<TimeSlot[]> {
     const { valid } = validateEnv()
 
-    // Si aún no se han configurado las credenciales de GCP, retorna franjas predeterminadas (modo desarrollo)
     if (!valid) {
       console.warn('[CalendarService] Credenciales de Google GCP no detectadas. Devolviendo horario por defecto.')
       return DEFAULT_BUSINESS_SLOTS.map((time) => ({ time, available: true }))
@@ -37,7 +35,6 @@ export class CalendarService {
       const auth = this.getAuthClient()
       const calendar = google.calendar({ version: 'v3', auth })
 
-      // Definir inicio y fin del día en la zona horaria especificada
       const timeMin = new Date(`${dateStr}T00:00:00`).toISOString()
       const timeMax = new Date(`${dateStr}T23:59:59`).toISOString()
 
@@ -52,10 +49,9 @@ export class CalendarService {
 
       const busySlots = response.data.calendars?.[config.google.calendarId]?.busy || []
 
-      // Evaluar cada hora por defecto si colisiona con algún intervalo busy
       return DEFAULT_BUSINESS_SLOTS.map((slotTime) => {
         const slotStart = new Date(`${dateStr}T${slotTime}:00`)
-        const slotEnd = new Date(slotStart.getTime() + 30 * 60 * 1000) // Duración 30 minutos
+        const slotEnd = new Date(slotStart.getTime() + 30 * 60 * 1000)
 
         const isBusy = busySlots.some((busy) => {
           if (!busy.start || !busy.end) return false
@@ -76,15 +72,15 @@ export class CalendarService {
   }
 
   /**
-   * Agende una nueva cita en el calendario de Google
+   * Agenda una nueva cita en el calendario de Google de forma resiliente
    */
   async createBooking(booking: BookingRequest): Promise<BookingResponse> {
-    const { valid } = validateEnv()
+    const { valid, missing } = validateEnv()
 
     if (!valid) {
       return {
         success: false,
-        message: 'El servidor aún no está configurado con las credenciales de Google Calendar.',
+        message: `Servidor no configurado con credenciales de GCP. Faltan: ${missing.join(', ')}`,
       }
     }
 
@@ -95,7 +91,7 @@ export class CalendarService {
       const startDateTime = new Date(`${booking.date}T${booking.time}:00`)
       const endDateTime = new Date(startDateTime.getTime() + 30 * 60 * 1000) // 30 mins
 
-      const event = {
+      const eventRequestBody = {
         summary: `Diagnóstico Napsi Tek - ${booking.nombre}`,
         description: `Cita solicitada desde el sitio web.\n\nNombre: ${booking.nombre}\nTeléfono/WhatsApp: ${booking.telefono}\nCorreo: ${booking.email}`,
         start: {
@@ -106,7 +102,7 @@ export class CalendarService {
           dateTime: endDateTime.toISOString(),
           timeZone: config.google.timeZone,
         },
-        attendees: [{ email: booking.email }, { email: config.google.calendarId }],
+        attendees: [{ email: booking.email }],
         reminders: {
           useDefault: false,
           overrides: [
@@ -116,11 +112,23 @@ export class CalendarService {
         },
       }
 
-      const res = await calendar.events.insert({
-        calendarId: config.google.calendarId,
-        requestBody: event,
-        sendUpdates: 'all', // Envia invitación de email al cliente y al organizador
-      })
+      let res
+      try {
+        // Intento 1: Crear evento con invitación al correo del cliente
+        res = await calendar.events.insert({
+          calendarId: config.google.calendarId,
+          requestBody: eventRequestBody,
+        })
+      } catch (firstAttemptError: any) {
+        console.warn('[CalendarService] Intento 1 falló (posible restricción de invitaciones de Service Account). Reintentando sin lista de attendees...', firstAttemptError?.message)
+        
+        // Intento 2: Crear evento directamente en el calendario sin forzar la lista de invitados
+        delete (eventRequestBody as any).attendees
+        res = await calendar.events.insert({
+          calendarId: config.google.calendarId,
+          requestBody: eventRequestBody,
+        })
+      }
 
       return {
         success: true,
@@ -128,11 +136,13 @@ export class CalendarService {
         eventId: res.data.id || undefined,
         htmlLink: res.data.htmlLink || undefined,
       }
-    } catch (error) {
-      console.error('[CalendarService] Error al agendar evento en Google Calendar:', error)
+    } catch (error: any) {
+      const details = error?.response?.data?.error?.message || error?.message || String(error)
+      console.error('[CalendarService] Error definitivo al agendar en Google Calendar:', details)
+      
       return {
         success: false,
-        message: 'Hubo un problema al agendar la cita. Por favor intenta nuevamente o contáctanos por WhatsApp.',
+        message: `Error de Google Calendar API: ${details}`,
       }
     }
   }
