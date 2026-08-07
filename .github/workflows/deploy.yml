@@ -49,10 +49,12 @@ jobs:
             synaptekportafolio/dist/ \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/var/www/napsitek.com/
 
-      - name: Deploy Backend & Restart Service
+      - name: Prepare Remote Backend Directory
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p ~/napsitek-backend"
-          
+
+      - name: Sync Backend Files
+        run: |
           rsync -avz --delete \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             --exclude 'node_modules' \
@@ -60,17 +62,33 @@ jobs:
             server/ \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/napsitek-backend/
 
+      - name: Create Remote .env File
+        env:
+          GOOGLE_CLIENT_EMAIL: ${{ secrets.GOOGLE_CLIENT_EMAIL }}
+          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+        run: |
+          cat <<EOF > server.env
+          PORT=3003
+          NODE_ENV=production
+          FRONTEND_URL=https://napsitek.com
+          GOOGLE_CLIENT_EMAIL="${GOOGLE_CLIENT_EMAIL}"
+          GOOGLE_PRIVATE_KEY="${GOOGLE_PRIVATE_KEY}"
+          GOOGLE_CALENDAR_ID="${GOOGLE_CALENDAR_ID}"
+          EOF
+
+      - name: Transfer .env File to VPS
+        run: |
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            server.env \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/napsitek-backend/.env
+
+      - name: Install Remote Production Dependencies & Restart Service
+        run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             export PATH=\$HOME/.local/bin:\$PATH
-            cd ~/napsitek-backend && \
-            pnpm install --prod && \
-            cat << 'EOF' > .env
-PORT=3003
-NODE_ENV=production
-FRONTEND_URL=https://napsitek.com
-GOOGLE_CLIENT_EMAIL=\"${{ secrets.GOOGLE_CLIENT_EMAIL }}\"
-GOOGLE_PRIVATE_KEY=\"${{ secrets.GOOGLE_PRIVATE_KEY }}\"
-GOOGLE_CALENDAR_ID=\"${{ secrets.GOOGLE_CALENDAR_ID }}\"
-EOF
-            pm2 restart napsitek-backend || pm2 start dist/index.js --name napsitek-backend --max-memory-restart 150M
+            cd ~/napsitek-backend
+            pnpm install --prod
+            pm2 reload napsitek-backend || pm2 start dist/index.js --name napsitek-backend --max-memory-restart 150M
           "
