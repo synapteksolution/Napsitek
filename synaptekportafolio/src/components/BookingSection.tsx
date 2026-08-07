@@ -1,12 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, Calendar, CheckCircle, MessageSquare } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, CheckCircle, MessageSquare, Loader2 } from 'lucide-react'
 import { useCalendar } from '../lib/useCalendar'
 import { toDateString } from '../lib/storeTime'
-
-// Array de horas simuladas
-const MOCK_HOURS = [
-  '09:00', '10:00', '11:00', '13:00', '14:30', '16:00', '17:00'
-]
+import { fetchAvailability, createBooking, type TimeSlot } from '../services/bookingApi'
 
 const MONTHS = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -18,7 +14,11 @@ const WEEKDAYS = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM']
 export function BookingSection() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [selectedTime, setSelectedTime] = useState<string>('')
-  
+  const [slots, setSlots] = useState<TimeSlot[]>([])
+  const [loadingSlots, setLoadingSlots] = useState<boolean>(false)
+  const [submitting, setSubmitting] = useState<boolean>(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
   // Estado del formulario
   const [nombre, setNombre] = useState('')
   const [telefono, setTelefono] = useState('')
@@ -41,18 +41,56 @@ export function BookingSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate])
 
+  // Cargar franjas horarias reales desde el backend cuando cambia la fecha seleccionada
+  useEffect(() => {
+    const loadSlots = async () => {
+      setLoadingSlots(true)
+      setErrorMessage(null)
+      const year = selectedDate.getFullYear()
+      const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
+      const day = String(selectedDate.getDate()).padStart(2, '0')
+      const formattedDate = `${year}-${month}-${day}`
+
+      const fetchedSlots = await fetchAvailability(formattedDate)
+      setSlots(fetchedSlots)
+      setLoadingSlots(false)
+    }
+
+    loadSlots()
+  }, [selectedDate])
+
   const activeMonthLabel = `${MONTHS[currentMonth]} ${currentYear}`
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedTime) {
-      alert("Por favor selecciona una hora disponible.")
+      alert('Por favor selecciona una hora disponible.')
       return
     }
-    // Simular el envío
-    setTimeout(() => {
+
+    setSubmitting(true)
+    setErrorMessage(null)
+
+    const year = selectedDate.getFullYear()
+    const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
+    const day = String(selectedDate.getDate()).padStart(2, '0')
+    const formattedDate = `${year}-${month}-${day}`
+
+    const res = await createBooking({
+      nombre,
+      telefono,
+      email,
+      date: formattedDate,
+      time: selectedTime,
+    })
+
+    setSubmitting(false)
+
+    if (res.success) {
       setSubmitted(true)
-    }, 800)
+    } else {
+      setErrorMessage(res.message || 'Error al procesar la reserva. Intenta de nuevo.')
+    }
   }
 
   const resetForm = () => {
@@ -61,6 +99,7 @@ export function BookingSection() {
     setTelefono('')
     setEmail('')
     setSelectedTime('')
+    setErrorMessage(null)
   }
 
   const waMsg = `Hola Napsi Tek, me gustaría agendar un diagnóstico el día ${selectedDate.getDate()} de ${MONTHS[selectedDate.getMonth()]} a las ${selectedTime}. Mi nombre es ${nombre}.`
@@ -138,43 +177,44 @@ export function BookingSection() {
           <h5 className="text-xs text-gray-400 uppercase tracking-widest mb-4 font-semibold">
             Horas Disponibles
           </h5>
-          <div className="flex flex-wrap gap-3">
-            {MOCK_HOURS.map((time) => {
-              const isSelected = selectedTime === time
-              // Simular aleatoriamente algunas horas no disponibles dependiendo del día (para realismo)
-              const isDisabled = (d: number, t: string) => {
-                if(d % 2 === 0 && (t === '10:00' || t === '16:00')) return true
-                if(d % 3 === 0 && (t === '09:00' || t === '14:30')) return true
-                return false
-              }
-              const disabled = isDisabled(selectedDate.getDate(), time)
-
-              if (disabled) {
+          {loadingSlots ? (
+            <div className="flex items-center gap-2 text-xs text-gray-400 py-4">
+              <Loader2 className="w-4 h-4 animate-spin text-[var(--moss)]" />
+              <span>Consultando disponibilidad en tiempo real...</span>
+            </div>
+          ) : slots.length === 0 ? (
+            <p className="text-xs text-gray-500 py-2">No hay horarios disponibles para esta fecha.</p>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              {slots.map((slot) => {
+                const isSelected = selectedTime === slot.time
+                if (!slot.available) {
+                  return (
+                    <button
+                      key={slot.time}
+                      disabled
+                      className="px-4 py-2 border border-gray-800 text-gray-600 cursor-not-allowed text-xs line-through rounded-full"
+                    >
+                      {slot.time}
+                    </button>
+                  )
+                }
                 return (
                   <button
-                    key={time}
-                    disabled
-                    className="px-4 py-2 border border-gray-800 text-gray-600 cursor-not-allowed text-xs line-through rounded-full"
+                    key={slot.time}
+                    onClick={() => setSelectedTime(slot.time)}
+                    className={`px-4 py-2 border text-xs rounded-full transition-all duration-200 ${
+                      isSelected
+                        ? 'border-white bg-[var(--moss)] text-[var(--ink-900)] font-bold'
+                        : 'border-white/20 text-gray-400 hover:border-white/50 hover:text-white'
+                    }`}
                   >
-                    {time}
+                    {slot.time}
                   </button>
                 )
-              }
-              return (
-                <button
-                  key={time}
-                  onClick={() => setSelectedTime(time)}
-                  className={`px-4 py-2 border text-xs rounded-full transition-all duration-200 ${
-                    isSelected
-                      ? 'border-white bg-[var(--moss)] text-[var(--ink-900)] font-bold'
-                      : 'border-white/20 text-gray-400 hover:border-white/50 hover:text-white'
-                  }`}
-                >
-                  {time}
-                </button>
-              )
-            })}
-          </div>
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -187,9 +227,9 @@ export function BookingSection() {
         {submitted ? (
           <div className="flex flex-col items-center justify-center text-center h-full pb-10 space-y-6">
             <CheckCircle className="text-[var(--moss)] w-16 h-16" />
-            <p className="text-xl text-white font-bold">¡Reserva Solicitada!</p>
+            <p className="text-xl text-white font-bold">¡Reserva Agendada!</p>
             <p className="text-sm text-gray-400 max-w-xs">
-              Tu diagnóstico para el día {selectedDate.getDate()} de {MONTHS[selectedDate.getMonth()]} a las {selectedTime} ha sido pre-agendado.
+              Tu diagnóstico para el día {selectedDate.getDate()} de {MONTHS[selectedDate.getMonth()]} a las {selectedTime} ha sido agendado en Google Calendar.
             </p>
             <a
               href={waLink}
@@ -206,6 +246,12 @@ export function BookingSection() {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5 flex flex-col">
+            {errorMessage && (
+              <div className="p-3 bg-red-950/80 border border-red-500/50 rounded text-red-200 text-xs">
+                {errorMessage}
+              </div>
+            )}
+
             <div className="space-y-1">
               <label className="text-xs text-gray-400 font-semibold tracking-wider uppercase">Nombre Completo</label>
               <input
@@ -255,13 +301,23 @@ export function BookingSection() {
             <div className="mt-6 pt-2">
               <button
                 type="submit"
+                disabled={submitting || !selectedTime}
                 className={`w-full py-4 text-sm font-bold flex items-center justify-center gap-2 transition-all rounded-full ${
-                  selectedTime 
+                  selectedTime && !submitting
                     ? 'bg-[var(--moss)] text-[var(--ink-900)] hover:opacity-90 cursor-pointer shadow-[0_0_15px_rgba(151,208,107,0.3)]' 
                     : 'bg-gray-800 text-gray-500 cursor-not-allowed'
                 }`}
               >
-                Solicitar Reserva <CheckCircle className="w-4 h-4" />
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-[var(--ink-900)]" />
+                    <span>Agendando en Google Calendar...</span>
+                  </>
+                ) : (
+                  <>
+                    Solicitar Reserva <CheckCircle className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </div>
           </form>
@@ -270,3 +326,4 @@ export function BookingSection() {
     </div>
   )
 }
+
