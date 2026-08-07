@@ -6,6 +6,16 @@ const DEFAULT_BUSINESS_SLOTS = [
   '09:00', '10:00', '11:00', '13:00', '14:30', '16:00', '17:00'
 ]
 
+// Colombia (America/Bogota) es UTC-05:00 de forma constante (sin horario de verano)
+const COLOMBIA_OFFSET = '-05:00'
+
+/**
+ * Convierte una fecha y hora local de Colombia a un objeto Date absoluto
+ */
+function parseColombiaDate(dateStr: string, timeStr: string): Date {
+  return new Date(`${dateStr}T${timeStr}:00${COLOMBIA_OFFSET}`)
+}
+
 export class CalendarService {
   private getAuthClient() {
     const { valid, missing } = validateEnv()
@@ -21,22 +31,31 @@ export class CalendarService {
   }
 
   /**
-   * Obtiene la disponibilidad filtrando los eventos ocupados de Google Calendar
+   * Obtiene la disponibilidad filtrando horas pasadas en horario Colombia y eventos de Google Calendar
    */
   async getAvailability(dateStr: string): Promise<TimeSlot[]> {
+    const now = Date.now()
     const { valid } = validateEnv()
 
+    // Si aún no se han configurado las credenciales de GCP, filtra sólo las horas pasadas
     if (!valid) {
-      console.warn('[CalendarService] Credenciales de Google GCP no detectadas. Devolviendo horario por defecto.')
-      return DEFAULT_BUSINESS_SLOTS.map((time) => ({ time, available: true }))
+      console.warn('[CalendarService] Credenciales de GCP no detectadas. Devolviendo horario por defecto filtrando pasados.')
+      return DEFAULT_BUSINESS_SLOTS.map((time) => {
+        const slotStart = parseColombiaDate(dateStr, time)
+        return {
+          time,
+          available: slotStart.getTime() > now,
+        }
+      })
     }
 
     try {
       const auth = this.getAuthClient()
       const calendar = google.calendar({ version: 'v3', auth })
 
-      const timeMin = new Date(`${dateStr}T00:00:00`).toISOString()
-      const timeMax = new Date(`${dateStr}T23:59:59`).toISOString()
+      // Rango del día en horario Colombia (-05:00)
+      const timeMin = new Date(`${dateStr}T00:00:00${COLOMBIA_OFFSET}`).toISOString()
+      const timeMax = new Date(`${dateStr}T23:59:59${COLOMBIA_OFFSET}`).toISOString()
 
       const response = await calendar.freebusy.query({
         requestBody: {
@@ -50,9 +69,15 @@ export class CalendarService {
       const busySlots = response.data.calendars?.[config.google.calendarId]?.busy || []
 
       return DEFAULT_BUSINESS_SLOTS.map((slotTime) => {
-        const slotStart = new Date(`${dateStr}T${slotTime}:00`)
-        const slotEnd = new Date(slotStart.getTime() + 30 * 60 * 1000)
+        const slotStart = parseColombiaDate(dateStr, slotTime)
+        const slotEnd = new Date(slotStart.getTime() + 30 * 60 * 1000) // 30 min
 
+        // 1. Validar que la hora no haya pasado en Colombia
+        if (slotStart.getTime() <= now) {
+          return { time: slotTime, available: false }
+        }
+
+        // 2. Validar colisión con eventos en Google Calendar
         const isBusy = busySlots.some((busy) => {
           if (!busy.start || !busy.end) return false
           const busyStart = new Date(busy.start)
@@ -72,7 +97,7 @@ export class CalendarService {
   }
 
   /**
-   * Agenda una nueva cita en el calendario de Google de forma resiliente
+   * Agenda una nueva cita en el calendario de Google validando que la fecha/hora sea futura
    */
   async createBooking(booking: BookingRequest): Promise<BookingResponse> {
     const { valid, missing } = validateEnv()
@@ -84,11 +109,18 @@ export class CalendarService {
       }
     }
 
+    const startDateTime = parseColombiaDate(booking.date, booking.time)
+    if (startDateTime.getTime() <= Date.now()) {
+      return {
+        success: false,
+        message: 'No es posible agendar citas en fechas u horarios pasados.',
+      }
+    }
+
     try {
       const auth = this.getAuthClient()
       const calendar = google.calendar({ version: 'v3', auth })
 
-      const startDateTime = new Date(`${booking.date}T${booking.time}:00`)
       const endDateTime = new Date(startDateTime.getTime() + 30 * 60 * 1000) // 30 mins
 
       const eventRequestBody = {
@@ -114,15 +146,12 @@ export class CalendarService {
 
       let res
       try {
-        // Intento 1: Crear evento con invitación al correo del cliente
         res = await calendar.events.insert({
           calendarId: config.google.calendarId,
           requestBody: eventRequestBody,
         })
       } catch (firstAttemptError: any) {
-        console.warn('[CalendarService] Intento 1 falló (posible restricción de invitaciones de Service Account). Reintentando sin lista de attendees...', firstAttemptError?.message)
-        
-        // Intento 2: Crear evento directamente en el calendario sin forzar la lista de invitados
+        console.warn('[CalendarService] Intento 1 falló. Reintentando sin lista de attendees...', firstAttemptError?.message)
         delete (eventRequestBody as any).attendees
         res = await calendar.events.insert({
           calendarId: config.google.calendarId,
@@ -138,7 +167,7 @@ export class CalendarService {
       }
     } catch (error: any) {
       const details = error?.response?.data?.error?.message || error?.message || String(error)
-      console.error('[CalendarService] Error definitivo al agendar en Google Calendar:', details)
+      console.error('[CalendarService] Error al agendar en Google Calendar:', details)
       
       return {
         success: false,
